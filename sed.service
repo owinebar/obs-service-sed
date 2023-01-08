@@ -1,0 +1,71 @@
+<service name="sed">
+  <summary>Run sed script on specified files</summary>
+  <description>This service updates files via sed scripts.</description>
+  <parameter name="script">
+    <description>Add contents of file to sed script.  May be specified multiple times</description>
+  </parameter>
+  <parameter name="expression">
+    <description>Add expression to script.  May be specified multiple times<descriptiion>
+  </parameter>
+  <parameter name="file">
+    <description>File to process</description>
+    <required/>
+  </parameter>
+  <parameter name="out">
+    <description>.Name of output file.  If unspecified, modify input in place</description>
+  </parameter>
+  <parameter name="default-print">
+    <description>Print every line that is not matched by an address.
+    		       Both default and empty value are "on".
+		       "off" specifies to use the "-n" flag to sed</description>
+    <allowed_value></allowed_value>
+    <allowed_value>on</allowed_value>
+    <allowed_value>off</allowed_value>
+  </parameter>
+  <parameter name="null-data">
+    <description>.Treat null character as line ending.
+    		  Default is off, empty value is equivalent to specifying "on"</description>
+    <allowed_value></allowed_value>
+    <allowed_value>on</allowed_value>
+    <allowed_value>off</allowed_value>
+  </parameter>
+  <parameter name="line-wrap">
+    <description>.The "-l" flag to sed. Optional integer</description>
+  </parameter>
+  <parameter name="syntax">
+    <description> Choice of extended or traditional regular expression syntax.
+    		  Default is extended as traditional has been deprecated for decades</description>
+    <allowed_value>extended</allowed_value>
+    <allowed_value>traditional</allowed_value>
+  </parameter>
+  <parameter name="missing-input">
+    <description>"fail" causes a missing input file to signal an error.
+    	         "empty" causes the sed script to be fed a stream with a single empty line when the input file is missing.
+    	         "empty-safe" will not overwrite the output file if it already exists.
+		 "ignore" means sed will do nothing on a missing input file.
+                 Default is "fail". </description>
+    <allowed_value>fail</allowed_value>
+    <allowed_value>succeed</allowed_value>
+  </parameter>
+  <parameter name="cpu-limit">
+    <description>.The limit for cpu time the sed script may consume in seconds
+    		  If the host has configured a limit, the limit will be the minimum of the two.
+		  The default is no limit.
+  </parameter>
+  <parameter name="memory-limit">
+    <description>.The limit for memory the process may use in kB.
+    		  If the host has configured a limit, the limit will be the minimum of the two.
+		  The default is no limit.
+  </parameter>
+  <parameter name="stack-limit">
+    <description>.The limit for the stack size the process may use in kB.
+    		  If the host has configured a limit, the limit will be the minimum of the two.
+		  The default is no limit.
+  </parameter>
+  <parameter name="file-size-limit">
+    <description>.The limit for the total size of all files created in kB.
+    		  If the host has configured a limit, the limit will be the minimum of the two.
+		  The default is no limit.
+  </parameter>
+</service>
+

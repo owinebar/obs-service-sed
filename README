@@ -1,0 +1,11 @@
+
+This is a source service for Open Build Service.  It allows you to use a sed script to process a file in
+your OBS file.  The _services.emacs file gives an example of how a file can be downloaded, have a version
+number extracted by a sed script into a file.  Then the set_version service can pick up the result and
+store it in the build recipe.
+
+Cloning the git repo for emacs just to extract some version information is ridiculously expensive.  The
+full repo is (at this time) approx 1.6GB, while the uncompressed source from the tarball is less than
+200MB.  And configure.ac is all of 230K.
+
+
