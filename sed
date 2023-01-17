@@ -1,15 +1,28 @@
 #!/bin/bash
 ## Simple OBS service to run a sed script
 
+full_service="$(realpath "$0")"
+service_name="$(basename "$0")"
+service_dir="$(dirname "$full_service")"
+if [ "$service_name" = "bash" ]; then
+    echo "Service name not recognized" >&2
+    exit 1
+fi
+
 # define some functions first
 on_error() {
-    echo "Error in script" >&2
-    cat ${script_file} >&2
+    local last_command="$BASH_COMMAND"
+    local last_line="${BASH_LINENO[0]}"
+    local last_src="${BASH_SOURCE[0]}"
+    echo "Error in service $service_name" >&2
+    if (( $DEBUG )); then
+	printf "%s:%s\t%s\n" "$last_src" "$last_line" "$last_command" >&2
+    fi
     exit 1
 }
 
 cleanup() {
-    rm -f ${script_file}
+    rm -Rf ${scriptd}
 }
 trap cleanup EXIT
 trap on_error ERR
@@ -99,6 +112,7 @@ check_path() {
 	    exit 1
 	    ;;
     esac
+    echo "$tmp"
 }
 
 check_file_exists() {
@@ -113,10 +127,12 @@ check_system_posint() {
     local tmp
     local given="$1"
     local name="$2"
-    tmp="$(check_positive_integer "${given}" "" 1)" || {
-	echo "$name limit must be positive integer, given: '$given'" >&2
-	exit 1
-    }
+    if [ "${given}" ]; then
+	tmp="$(check_positive_integer "${given}" "" 1)" || {
+	    echo "$name limit must be positive integer, given: '$given'" >&2
+	    exit 1
+	}
+    fi
     echo "$tmp"
 }
 check_system_int() {
@@ -125,13 +141,15 @@ check_system_int() {
     local name="$2"
     local min="$3"
     local max="$4"
-    if ! tmp="$(check_integer "${given}" "$min" "$max" 1)"; then
-	echo "System $name limit must be integer, given: '$given'" >&2
-	exit 1
-    fi
-    if [ "$tmp" -ne "$given" ]; then
-	echo "System $name limit must be between '$min' and '$max', given: '$given'" >&2
-	exit 1
+    if [ "${given}" ]; then
+	if ! tmp="$(check_integer "${given}" "$min" "$max" 1)"; then
+	    echo "System $name limit must be integer, given: '$given'" >&2
+	    exit 1
+	fi
+	if [ "$tmp" -ne "$given" ]; then
+	    echo "System $name limit must be between '$min' and '$max', given: '$given'" >&2
+	    exit 1
+	fi
     fi
     echo "$tmp"
 }
@@ -139,6 +157,7 @@ check_system_int() {
 limited_sed() {
     local ul_flags="$1"
     shift
+    trap on_error ERR
     if [ "$ul_flags" ]; then
 	## some flags specified
 	( ulimit $ul_flags >/dev/null 2>&1
@@ -148,6 +167,34 @@ limited_sed() {
 	sed "$@"
     fi
 }
+limited_sed_pipeline() {
+    local ul_flags="$1" sed_flags="$2" mode="$3"
+    shift 3
+    trap on_error ERR
+    local sed_pipe
+    if [ "$mode" = "script" ]; then
+	local i=0
+	local sfile=$(mktemp -p $scriptd)
+	while (( $# > 0 )); do
+	    cat "$1" >>$sfile
+	    printf "\n" >>$sfile
+	done
+	sed_pipe="sed $sed_flags -f $sfile"
+    else
+	local sed="sed $sed_flags -f "
+	sed_pipe="$(IFS="|"; tmp="${*/#/$sed}"; echo "${tmp//|/ | }")"
+    fi
+    if [ "$ul_flags" ]; then
+	## some flags specified
+	( ulimit $ul_flags >/dev/null 2>&1
+	  shopt -s pipefail
+	  eval "$sed_pipe"
+	  shopt -u pipefail
+	)
+    else
+	eval "$sed_pipe"
+    fi
+}
 
 # these values may be set by the system configuration file
 missing_input="fail"
@@ -155,6 +202,7 @@ system_cpu_limit=""
 system_memory_limit=""
 system_stack_limit=""
 system_file_size_limit=""
+system_script_size_limit=""
 
 system_config="/etc/obs/service/$(basename "$0")"
 if [ -e "$system_config" ]; then
@@ -167,7 +215,8 @@ system_stack_limit="$(check_system_posint "${system_stack_limit}" "stack")" || e
 system_file_size_limit="$(check_system_posint "${system_file_size_limit}" "file size")" ||
     exit 1
 script=""
-script_file=$(mktemp)
+scriptd=$(mktemp -d)
+script_file=$(mktemp -p $scriptd)
 infile=""
 outfile=""
 outdir=""
@@ -181,21 +230,26 @@ memory_limit=""
 stack_limit=""
 file_size_limit=""
 priority_limit=""
-
+script_size_limit=""
+mode="script"
+declare -a exprs expr_tps
+tmp
 while [ $# -gt 0 ]; do
     case $1 in
 	--script)
-	    check_path "$(pwd)" "$2" "script"
-	    cat "${2}" >>$script_file
-	    printf "\n" >>$script_file	    
+	    tmp="$(check_path "$(pwd)" "$2" "script")"
+	    #exprs[${#exprs[@]}]=$(mktemp -p $scriptd)
+	    expr_tps[${#exprs[@]}]="file"
+	    exprs[${#exprs[@]}]="$tmp"
 	    ;;
 	--expression)
-	    printf "%s" "$2" >>$script_file
-	    printf "\n" >>$script_file	    
+	    expr_tps[${#exprs[@]}]="expr"
+	    exprs[${#exprs[@]}]=$(mktemp -p $scriptd)
+	    printf "%s\n" "$2" >${exprs[-1]}
 	    ;;
 	--file)
-	    check_path "$(pwd)" "$2" "input"
-	    infile="${2}"
+	    tmp="$(check_path "$(pwd)" "$2" "input")"
+	    infile="$tmp"
 	    ;;
 	--out)
 	    outfile="${2}"
@@ -220,6 +274,20 @@ while [ $# -gt 0 ]; do
 		    ;;
 		*)
 		    null_flag=""
+		    ;;
+	    esac
+	    ;;
+	--mode)
+	    case "$2" in
+		script)
+		    mode="script"
+		    ;;
+		pipe)
+		    mode="pipe"
+		    ;;
+		*)
+		    echo "Unrecognized mode $2" >&2
+		    exit 1
 		    ;;
 	    esac
 	    ;;
@@ -252,8 +320,8 @@ while [ $# -gt 0 ]; do
 	--file-size-limit)
 	    file_size_limit="$(check_positive_integer "$2" "${system_file_size_limit}")"
 	    ;;
-	--prioritylimit)
-	    priority_limit="$(check_integer "$2" "${system_priority_limit}" 19)"
+	--script-size-limit)
+	    script_size_limit="$(check_positive_integer "$2" "${system_script_size_limit}")"
 	    ;;
 	--outdir)
 	    outdir="$2"
@@ -277,14 +345,47 @@ if [ -z "$outfile" ]; then
    outfile="$infile"
 fi
 outpath="${outdir}/${outfile}"
-check_path "$outdir" "$outpath" "output"
+outpath="$(check_path "$outdir" "$outpath" "output")"
 tmp="$(dirname "${outpath}")"
 mkdir -p "$tmp"
 if [ \! -d "$tmp" ]; then
     echo "Destination directory for $outfile in $outdir does not exist and could not be created" >&2
     exit 1
 fi
-
+if [ -z "$script_size_limit" ]; then
+    lim=-1
+else
+    lim=$(( ${script_size_limit} * 1024 ))
+fi
+N=${#exprs[@]}
+for (( i=0; i < N ; i++ )); do
+    x="${exprs[$i]}"
+    xtp="${expr_tps[$i]}"
+    tp="$(stat %F "$x")"
+    if [ tp != "regular file" ]; then
+	echo "Script $x is not a regular file, aborting" >&2
+	exit 1
+    fi
+    sz="$(stat %s "$x")"
+    if (( $lim > 0 && $sz > $lim )); then
+	case "$xtp" in
+	    file)
+		echo "Script file $x exceeds limit of $script_size_limit kB" >&2
+		;;
+	    expr)
+		echo "Script expression $i  exceeds limit of $script_size_limit kB" >&2
+		;;
+	    *)
+		echo "Should never get here" >&2
+		;;
+	esac
+	exit 1
+    fi
+    if [ "$outpath" = "$x" ]; then
+	echo "Output file $outfile is specified as script expression $i - aborting" >&2
+	exit 1
+    fi
+done
 ulimit_flags=""
 if [ "$cpu_limit" ]; then
     ulimit_flags="$ulimit_flags -t $cpu_limit"
@@ -299,16 +400,14 @@ if [ "$file_size_limit" ]; then
     ulimit_flags="$ulimit_flags -f $file_size_limit"
 fi
 
+flags="--sandbox $syntax_flag $noprint_flag $null_flag $wrap_flag"
 if [ -e "${infile}" ]; then
-    limited_sed "$ulimit_flags" \
-		--sandbox \
-		$syntax_flag \
-		$noprint_flag \
-		$null_flag \
-		$wrap_flag \
-		-f "${script_file}" \
-		<"${infile}" \
-		>"${outpath}"
+    limited_sed_pipeline "$ulimit_flags" \
+			 "$flags" \
+			 "$mode" \
+			 "${exprs[@]}" \
+			 <"${infile}" \
+			 >"${outpath}"
 else
     outfile_exists="false"
     if [ -e "$outpath" ]; then
@@ -323,16 +422,15 @@ else
 	    :   # Do nothing
 	    ;;
 	empty-safe:false | empty:* )
-	    # treat as file with a single empty line, since script may handle that case (sed does not match $ if there is no newline in the input)
+	    # treat as file with a single empty line,
+	    # since script may handle that case
+	    # (sed does not match $ if there is no newline in the input)
 	    echo |
-		limited_sed "$ulimit_flags" \
-			    --sandbox \
-			    $syntax_flag \
-			    $noprint_flag \
-			    $null_flag \
-			    $wrap_flag \
-			    -f "${script_file}" \
-			    >"${outpath}"
+		limited_sed_pipeline "$ulimit_flags" \
+				     "$flags" \
+				     "$mode" \
+				     "${exprs[@]}" \
+				     >"${outpath}"
 	    ;;
 	*)
 	    echo "Urecognized missing input option: $missing_input" >&2

@@ -14,6 +14,13 @@
   <parameter name="out">
     <description>.Name of output file.  If unspecified, modify input in place</description>
   </parameter>
+  <parameter name="mode">
+    <description>By default all expressions and script files are accumulated into a single script.
+    		 In pipe mode, the results of processing each expression/script are fed into
+		 the following sed script.
+    <allowed_value>script</allowed_value>
+    <allowed_value>pipe</allowed_value>
+  </parameter>
   <parameter name="default-print">
     <description>Print every line that is not matched by an address.
     		       Both default and empty value are "on".
