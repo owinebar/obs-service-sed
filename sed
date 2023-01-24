@@ -1,14 +1,15 @@
 #!/bin/bash
 ## Simple OBS service to run a sed script
-
 full_service="$(realpath "$0")"
 service_name="$(basename "$0")"
-service_dir="$(dirname "$full_service")"
+#service_dir="$(dirname "$full_service")"
+service_dir=/usr/lib/obs/service
 if [ "$service_name" = "bash" ]; then
     echo "Service name not recognized" >&2
     exit 1
 fi
-
+DEBUG=${DEBUG:-0}
+#echo "DEBUG=$DEBUG"
 # define some functions first
 on_error() {
     local last_command="$BASH_COMMAND"
@@ -17,6 +18,13 @@ on_error() {
     echo "Error in service $service_name" >&2
     if (( $DEBUG )); then
 	printf "%s:%s\t%s\n" "$last_src" "$last_line" "$last_command" >&2
+	local k=0
+	x="$(caller $k)"
+	while [ "$x" ]; do
+	    echo "$x";
+	    (( ++k ))
+	    x="$(caller $k)"
+	done
     fi
     exit 1
 }
@@ -24,6 +32,7 @@ on_error() {
 cleanup() {
     rm -Rf ${scriptd}
 }
+
 trap cleanup EXIT
 trap on_error ERR
 
@@ -51,7 +60,6 @@ check_legal() {
     local val="$1"
     local check="$2"
     local signal_err="$3"
-    echo "$check"
     if [ -z "$check" ] || [ "${val}" != "$check" ]; then
 	if [ "${signal_err}" ]; then
 	    case "${signal_err}" in
@@ -105,7 +113,7 @@ check_path() {
     local base="$1"
     local full="$2"
     local desc="$3"
-    tmp="$(realpath --relative-base="$(realpath "${base}")" "$full")"
+    tmp="$(realpath -s --relative-base="$(realpath "${base}")" "$full")"
     case "$tmp" in
 	/*)
 	    echo "Illegal ${desc} file name: $full" >&2
@@ -119,7 +127,7 @@ check_file_exists() {
     local fname="$1"
     if [ \! -e "$fname" ] || [ \! -f "$fname" ]; then
 	echo "File '$fname' does not exist or is not a regular file" >&2
-	exit 1
+	return 1
     fi
 }
 
@@ -167,6 +175,7 @@ limited_sed() {
 	sed "$@"
     fi
 }
+
 limited_sed_pipeline() {
     local ul_flags="$1" sed_flags="$2" mode="$3"
     shift 3
@@ -178,6 +187,7 @@ limited_sed_pipeline() {
 	while (( $# > 0 )); do
 	    cat "$1" >>$sfile
 	    printf "\n" >>$sfile
+	    shift
 	done
 	sed_pipe="sed $sed_flags -f $sfile"
     else
@@ -233,7 +243,7 @@ priority_limit=""
 script_size_limit=""
 mode="script"
 declare -a exprs expr_tps
-tmp
+#tmp
 while [ $# -gt 0 ]; do
     case $1 in
 	--script)
@@ -345,7 +355,9 @@ if [ -z "$outfile" ]; then
    outfile="$infile"
 fi
 outpath="${outdir}/${outfile}"
-outpath="$(check_path "$outdir" "$outpath" "output")"
+echo "sed output to $outpath"
+outpath="${outdir}/$(check_path "$outdir" "$outpath" "output")"
+echo "sed output (checked) to $outpath"
 tmp="$(dirname "${outpath}")"
 mkdir -p "$tmp"
 if [ \! -d "$tmp" ]; then
@@ -357,16 +369,21 @@ if [ -z "$script_size_limit" ]; then
 else
     lim=$(( ${script_size_limit} * 1024 ))
 fi
+
+check_regular_file() {
+    local fn="$1"
+    local tp="$(stat -L -c %F "$1")"
+    if [ "$tp" != "regular file" ]; then
+	echo "${2:+$2 } $1 is not a regular file or symbolic link to one, aborting" >&2
+	return 1
+    fi
+}
 N=${#exprs[@]}
 for (( i=0; i < N ; i++ )); do
     x="${exprs[$i]}"
     xtp="${expr_tps[$i]}"
-    tp="$(stat %F "$x")"
-    if [ tp != "regular file" ]; then
-	echo "Script $x is not a regular file, aborting" >&2
-	exit 1
-    fi
-    sz="$(stat %s "$x")"
+    check_regular_file "$x" "Script"
+    sz="$(stat -c %s "$x")"
     if (( $lim > 0 && $sz > $lim )); then
 	case "$xtp" in
 	    file)
@@ -402,6 +419,7 @@ fi
 
 flags="--sandbox $syntax_flag $noprint_flag $null_flag $wrap_flag"
 if [ -e "${infile}" ]; then
+    echo "sed output to ${outpath}"
     limited_sed_pipeline "$ulimit_flags" \
 			 "$flags" \
 			 "$mode" \
